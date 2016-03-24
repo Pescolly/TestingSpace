@@ -55,7 +55,8 @@ func getSamplesFromAVAudioFile(url:NSURL) -> AVAudioPCMBuffer?
 	do
 	{
 		audioFile = try AVAudioFile(forReading: url, commonFormat: AVAudioCommonFormat.PCMFormatInt16, interleaved: false)
-		outSamples = AVAudioPCMBuffer(PCMFormat: (audioFile?.processingFormat)!, frameCapacity: AVAudioFrameCount((audioFile?.length)!))
+		let audioFileLength = AVAudioFrameCount((audioFile?.length)!)
+		outSamples = AVAudioPCMBuffer(PCMFormat: (audioFile?.processingFormat)!, frameCapacity: audioFileLength)
 		try audioFile?.readIntoBuffer(outSamples!)
 		
 		return outSamples
@@ -124,10 +125,23 @@ func getSamplesFromAVAsset(url:NSURL) -> NSData?
 
 func getPeakFromSamples(inputBuffer:AVAudioPCMBuffer) -> Int16
 {
+	print(INT16_MIN)
+	print(INT16_MAX)
 	var peakValue:Int16 = 0
 	for var i = 0; i < Int(inputBuffer.frameLength); i++
 	{
-		let sample:Int16 = inputBuffer.int16ChannelData.memory[i]
+		var sample:Int16 = inputBuffer.int16ChannelData.memory[i]
+		
+		if Int32(sample) >= INT16_MAX
+		{
+			sample = Int16(INT16_MAX - Int32(1))
+		}
+		if Int32(sample) <= INT16_MIN
+		{
+			sample = Int16(INT16_MIN + Int32(1))
+		}
+		
+		
 		let absSampleValue:Int16 = abs(sample)
 		if absSampleValue > peakValue
 		{
@@ -157,6 +171,11 @@ func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	return normalizedAudioBuffer
 }
 
+func envelopeDetection(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
+{
+	
+}
+
 func compressAudio(inputBuffer:AVAudioPCMBuffer)
 {
 	
@@ -170,18 +189,16 @@ func beatDetection()
 
 do
 {
-	let url = NSURL(fileURLWithPath: "/Users/armen/Documents/440hz.aiff")
+	let url = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009.WAV")
 	let samples:AVAudioPCMBuffer? = getSamplesFromAVAudioFile(url)
 	let normalizedSamples = normalizeAudio(samples!)
 	
 	let audioDataPointer = normalizedSamples.int16ChannelData.memory
-	let audioData = NSData(bytes: audioDataPointer, length: Int(normalizedSamples.frameLength))
+	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
+	let audioData = NSData(bytes: audioDataPointer, length: bufferSizeInBytes)
 
 	audioData.writeToFile("/Users/armen/Desktop/data", atomically: true)
-	
-	let player = try AVAudioPlayer(data: audioData, fileTypeHint: AVFileTypeWAVE)
-	player.prepareToPlay()
-	player.play()
+
 }
 catch
 {
