@@ -161,7 +161,7 @@ func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	
 	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(PCMFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
 	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
-	for var i = 0; i < Int(inputBuffer.frameLength); i++
+	for i in 0...Int(inputBuffer.frameLength)
 	{
 		let sample:Int16 = inputBuffer.int16ChannelData.memory[i]
 		let normalizedSample = Int16(Double(sample) * normalizationRatio)
@@ -171,12 +171,57 @@ func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	return normalizedAudioBuffer
 }
 
-func envelopeDetection(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
+func envelopeDetection(inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAudioPCMBuffer
+{
+	//add padding the size of window to beginning/end of buffer
+	let inputBufferLength = inputBuffer.frameLength
+	let newBufferFrameLength = (Int(inputBufferLength) + (windowLength * 2))
+	let paddedBuffer = AVAudioPCMBuffer(PCMFormat: inputBuffer.format, frameCapacity: UInt32(newBufferFrameLength))
+	let paddedBufferLength = Int(paddedBuffer.frameCapacity)
+	
+	//create a list of tuples for audio segments
+	
+	var audioSegments:[(start:Int, end:Int)] = []
+	
+	//add padding to front
+	for i in 0...windowLength//var i = 0; i < windowLength; i++
+	{
+		paddedBuffer.int16ChannelData.memory[i] = 0
+	}
+
+	//add sample values
+	for i in windowLength...Int(inputBufferLength)
+	{
+		paddedBuffer.int16ChannelData.memory[i] = inputBuffer.int16ChannelData.memory[i-windowLength];
+	}
+	
+	//add padding to back
+	
+	for i in (windowLength+Int(inputBufferLength))...paddedBufferLength
+	{
+		paddedBuffer.int16ChannelData.memory[i] = 0
+	}
+	
+	//window length is in samples
+	var rollingRMS:Int = 0
+
+	//create a rolling RMS to find audio envelope use -70 dB as
+	for i in 0...paddedBufferLength
+	{
+		let sample:Int16 = paddedBuffer.int16ChannelData.memory[i]
+		rollingRMS += pow(sample, 2.0)
+		rollingRMS /= windowLength
+		rollingRMS = sqrt(rollingRMS)
+	}
+	
+}
+
+func compressDownward(inputBuffer:AVAudioPCMBuffer, ratio:float_t, threshold:Int)
 {
 	
 }
 
-func compressAudio(inputBuffer:AVAudioPCMBuffer)
+func compressUpward(inputBuffer:AVAudioPCMBuffer, ratio:float_t, threshold:Int)
 {
 	
 }
@@ -192,6 +237,8 @@ do
 	let url = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009.WAV")
 	let samples:AVAudioPCMBuffer? = getSamplesFromAVAudioFile(url)
 	let normalizedSamples = normalizeAudio(samples!)
+
+	envelopeDetection(normalizedSamples, windowLength: 50)
 	
 	let audioDataPointer = normalizedSamples.int16ChannelData.memory
 	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
