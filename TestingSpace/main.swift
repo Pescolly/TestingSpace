@@ -173,6 +173,7 @@ func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 
 func envelopeDetection(inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAudioPCMBuffer
 {
+	//window length is in samples
 	//add padding the size of window to beginning/end of buffer
 	let inputBufferLength = inputBuffer.frameLength
 	let newBufferFrameLength = (Int(inputBufferLength) + (windowLength * 2))
@@ -202,18 +203,58 @@ func envelopeDetection(inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAu
 		paddedBuffer.int16ChannelData.memory[i] = 0
 	}
 	
-	//window length is in samples
-	var rollingRMS:Int = 0
-
+	//create initial values
+	var rollingSum:Double = 0
+	var sample0 = Double(paddedBuffer.int16ChannelData.memory[0])
+	
+	//set silence on/off
+	var silence:Bool = true
+	var audioStart = 0
+	var audioEnd = 0
+	
 	//create a rolling RMS to find audio envelope use -70 dB as
 	for i in 0...paddedBufferLength
 	{
+		//get sample value and subtract sample that falls out of scope of the summing window
 		let sample:Int16 = paddedBuffer.int16ChannelData.memory[i]
-		rollingRMS += pow(sample, 2.0)
-		rollingRMS /= windowLength
-		rollingRMS = sqrt(rollingRMS)
+		let doubleSample = Double(sample)
+		if i > windowLength
+		{
+			rollingSum -= Double(sample0)
+			sample0 = pow(Double(paddedBuffer.int16ChannelData.memory[i-windowLength]),2)
+		}
+		//perform RMS
+		rollingSum += pow(doubleSample, 2.0)
+		let mean = rollingSum / Double(windowLength)
+		let RMS = sqrt(mean)
+
+		//convert rms to dB
+		let RMSdB = 20 * log10(RMS/Double(INT16_MAX))
+		
+		//set silence to false if RMS > -70
+		if RMSdB > -70
+		{
+			if silence == true
+			{
+				audioStart = i
+			}
+			silence = false
+		}
+		
+		//set silence to true if RMS < -70
+		if RMSdB < -70
+		{
+			//if end of current section of audio set create audio tuple
+			if silence == false
+			{
+				audioEnd = i
+				let audioStartStopTuple = (audioStart, audioEnd)
+				audioSegments.append(audioStartStopTuple)
+			}
+			silence = true
+		}
 	}
-	
+	print(audioSegments)
 }
 
 func compressDownward(inputBuffer:AVAudioPCMBuffer, ratio:float_t, threshold:Int)
@@ -234,11 +275,12 @@ func beatDetection()
 
 do
 {
+	
 	let url = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009.WAV")
 	let samples:AVAudioPCMBuffer? = getSamplesFromAVAudioFile(url)
 	let normalizedSamples = normalizeAudio(samples!)
 
-	envelopeDetection(normalizedSamples, windowLength: 50)
+	envelopeDetection(samples!, windowLength: 100)
 	
 	let audioDataPointer = normalizedSamples.int16ChannelData.memory
 	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
