@@ -8,22 +8,24 @@
 
 import AVFoundation
 import Foundation
+import Accelerate
 
 struct UNIVERSAL_AUDIO_SETTINGS
 {
 	static let SAMPLE_BYTE_SIZE = 2
 	static let CHANNEL_COUNT = 1
-	static let SAMPLE_RATE:Double = 48000.0
+	static let SAMPLE_RATE:Double = 44100
 	
 	static let AUDIO_PLAY_RECORD_SETTINGS = [
 		AVFormatIDKey: Int(kAudioFormatLinearPCM),
 		AVSampleRateKey: SAMPLE_RATE,
 		AVNumberOfChannelsKey: CHANNEL_COUNT as NSNumber,
-		AVLinearPCMBitDepthKey : SAMPLE_BYTE_SIZE * 8,
+		AVLinearPCMBitDepthKey : 32,
 		AVLinearPCMIsBigEndianKey : false,
-		AVLinearPCMIsFloatKey : false,
+		AVLinearPCMIsFloatKey : true,
 	]
 	
+	static let audioF = AVAudioFormat(settings: AUDIO_PLAY_RECORD_SETTINGS)
 	
 	/*
 	static let CHANNEL_LAYOUT:AudioChannelLayout = AudioChannelLayout(mChannelLayoutTag: kAudioChannelLayoutTag_Mono,
@@ -151,6 +153,32 @@ func getPeakFromSamples(inputBuffer:AVAudioPCMBuffer) -> Int16
 	return peakValue
 }
 
+func getFloatPeakFromSamples(inputBuffer:AVAudioPCMBuffer) -> Float
+{
+	var peakValue:Float = 0
+	for var i = 0; i < Int(inputBuffer.frameLength); i++
+	{
+		var sample:Float = inputBuffer.floatChannelData.memory[i]
+		
+//		if sample >= 1
+//		{
+//			sample = 1
+//		}
+//		if sample <= -1
+//		{
+//			sample = -1
+//		}
+		
+		
+		let absSampleValue:Float = abs(sample)
+		if absSampleValue > peakValue
+		{
+			peakValue = absSampleValue
+		}
+	}
+	return peakValue
+}
+
 func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 {
 	//get peak and set ratio using peak with headroom
@@ -171,6 +199,26 @@ func normalizeAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	return normalizedAudioBuffer
 }
 
+func normalizeFloatAudio(inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
+{
+	//get peak and set ratio using peak with headroom
+	let peak:Float = getFloatPeakFromSamples(inputBuffer)
+	let paddedMax:Float = 0.9
+	let normalizationMax = Double(peak) / Double(paddedMax)
+	let normalizationRatio = 1 + (1-normalizationMax) //get ratio for multiplication (normMax:1)
+	
+	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(PCMFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
+	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
+	for i in 0...Int(inputBuffer.frameLength)
+	{
+		let sample:Float = inputBuffer.floatChannelData.memory[i]
+		let normalizedSample = Float(Double(sample) * normalizationRatio)
+		normalizedAudioBuffer.floatChannelData.memory[i] = normalizedSample
+	}
+	
+	return normalizedAudioBuffer
+}
+
 func envelopeDetection(inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAudioPCMBuffer
 {
 	//window length is in samples
@@ -183,19 +231,19 @@ func envelopeDetection(inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAu
 	//create a list of tuples for audio segments
 	
 	var audioSegments:[(start:Int, end:Int)] = []
-	
+//TODO change to memcpy
 	//add padding to front
 	for i in 0...windowLength//var i = 0; i < windowLength; i++
 	{
 		paddedBuffer.int16ChannelData.memory[i] = 0
 	}
-
+//TODO change to memcpy
 	//add sample values
 	for i in windowLength...Int(inputBufferLength)
 	{
 		paddedBuffer.int16ChannelData.memory[i] = inputBuffer.int16ChannelData.memory[i-windowLength];
 	}
-	
+	//TODO change to memcpy
 	//add padding to back
 	
 	for i in (windowLength+Int(inputBufferLength))...paddedBufferLength
@@ -272,21 +320,33 @@ func beatDetection()
 	
 }
 
+func multipointTimeStretching()
+{
+	
+}
 
+
+//start
 do
 {
 	
 	let url = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009.WAV")
-	let samples:AVAudioPCMBuffer? = getSamplesFromAVAudioFile(url)
-	let normalizedSamples = normalizeAudio(samples!)
+	let audioFile = try AVAudioFile(forReading: url)	//getSamplesFromAVAudioFile(url)
+	let samples:AVAudioPCMBuffer = AVAudioPCMBuffer(PCMFormat: audioFile.processingFormat, frameCapacity: AVAudioFrameCount(audioFile.length))
+	try audioFile.readIntoBuffer(samples)
+	let normalizedSamples = normalizeFloatAudio(samples)
 
-	envelopeDetection(samples!, windowLength: 100)
+	let nurl = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009_NORMA.WAV")
+ 	let newFile = try AVAudioFile(forWriting: nurl, settings: UNIVERSAL_AUDIO_SETTINGS.AUDIO_PLAY_RECORD_SETTINGS)
+	try newFile.writeFromBuffer(normalizedSamples)
 	
-	let audioDataPointer = normalizedSamples.int16ChannelData.memory
-	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
-	let audioData = NSData(bytes: audioDataPointer, length: bufferSizeInBytes)
+	//	envelopeDetection(samples, windowLength: 100)
+	
+	//	let audioDataPointer = normalizedSamples.int16ChannelData.memory
+	//	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
+	//	let audioData = NSData(bytes: audioDataPointer, length: bufferSizeInBytes)
 
-	audioData.writeToFile("/Users/armen/Desktop/data", atomically: true)
+	//	audioData.writeToFile("/Users/armen/Desktop/data", atomically: true)
 
 }
 catch
