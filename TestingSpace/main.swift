@@ -153,35 +153,6 @@ func getPeakFromSamples(_ inputBuffer:AVAudioPCMBuffer) -> Int16
 	return peakValue
 }
 
-func getFloatPeakFromSamples(_ inputBuffer:AVAudioPCMBuffer) -> Float
-{
-	var peak_value : Float = 0.0
-	vDSP_maxmgv((inputBuffer.floatChannelData?.pointee)!, vDSP_Stride(inputBuffer.format.channelCount), &peak_value, vDSP_Length(inputBuffer.frameLength))
-	return peak_value
-}
-
-
-
-func normalizeFloatAudio(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
-{
-	//get peak and set ratio using peak with headroom
-	let peak:Float = getFloatPeakFromSamples(inputBuffer)
-	let paddedMax:Float = 0.9
-	let normalizationMax = Double(peak) / Double(paddedMax)
-	let normalizationRatio = 1 + (1-normalizationMax) //get ratio for multiplication (normMax:1)
-	
-	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
-	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
-	for i in 0...Int(inputBuffer.frameLength)
-	{
-		let sample:Float = inputBuffer.floatChannelData!.pointee[i]
-		let normalizedSample = Float(Double(sample) * normalizationRatio)
-		normalizedAudioBuffer.floatChannelData?.pointee[i] = normalizedSample
-	}
-	
-	return normalizedAudioBuffer
-}
-
 func envelopeDetection(_ inputBuffer:AVAudioPCMBuffer, windowLength:Int)// -> AVAudioPCMBuffer
 {
 	//window length is in samples
@@ -318,18 +289,26 @@ func create_fade_in_out(inputBuffer : AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	return inputBuffer
 }
 
-//func normalizeAudio(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
-//{
-//	//get peak and set ratio using peak with headroom
-//	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
-//	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
-//
-//	vDSP_normalize((inputBuffer.floatChannelData?.pointee)!, 1,
-//	               <#T##__C: UnsafeMutablePointer<Float>?##UnsafeMutablePointer<Float>?#>, <#T##__IC: vDSP_Stride##vDSP_Stride#>,
-//	               <#T##__Mean: UnsafeMutablePointer<Float>##UnsafeMutablePointer<Float>#>, <#T##__StandardDeviation: UnsafeMutablePointer<Float>##UnsafeMutablePointer<Float>#>, <#T##__N: vDSP_Length##vDSP_Length#>)
-//
-//	return normalizedAudioBuffer
-//}
+func getFloatPeakFromSamples(_ inputBuffer:AVAudioPCMBuffer) -> Float
+{
+	var peak_value : Float = 0.0
+	vDSP_maxmgv((inputBuffer.floatChannelData?.pointee)!, vDSP_Stride(inputBuffer.format.channelCount), &peak_value, vDSP_Length(inputBuffer.frameLength))
+	return peak_value
+}
+
+func normalizeAudioSamples(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
+{
+	//get peak and set ratio using peak with headroom
+	let peak : Float = getFloatPeakFromSamples(inputBuffer)
+	
+	for i in 0...Int(inputBuffer.frameLength)
+	{
+		let sample : Float = inputBuffer.floatChannelData!.pointee[i]
+		inputBuffer.floatChannelData?.pointee[i] = (sample / peak)
+	}
+	
+	return inputBuffer
+}
 
 
 func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inputBuffer_2 : AVAudioPCMBuffer, buffer_2_weight : Float) -> AVAudioPCMBuffer
@@ -366,14 +345,14 @@ func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inpu
 	vDSP_conv(sample_array_1_padded, 1, kEnd, -1, &result, 1, vDSP_Length(resultSize), vDSP_Length(h_vector.count))
 	
 	
-	let newBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer_1.format, frameCapacity: AVAudioFrameCount(result.count))
+	var newBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer_1.format, frameCapacity: AVAudioFrameCount(result.count))
 	for sample_index in 0 ... resultSize-1
 	{
 		newBuffer.floatChannelData?.pointee[sample_index] = result[sample_index]
 	}
 	
 	newBuffer.frameLength = inputBuffer_1.frameLength + inputBuffer_2.frameLength - 1
-	
+	newBuffer = normalizeAudioSamples(newBuffer)
 	return newBuffer
 	
 }
@@ -382,19 +361,19 @@ func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inpu
 do
 {
 	
-	let url1 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/StaccatoMelody.wav")
+	let url1 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/SadLull.wav")
 	let audioFile_1 = try AVAudioFile(forReading: url1)	//getSamplesFromAVAudioFile(url)
 	let inputBuffer_1 : AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: audioFile_1.processingFormat,
 													frameCapacity: AVAudioFrameCount(audioFile_1.length))
 	try audioFile_1.read(into: inputBuffer_1)
 	
-	let url2 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/SkittishMice.wav")
+	let url2 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/Shaker.wav")
 	let audioFile_2 = try AVAudioFile(forReading: url2)	//getSamplesFromAVAudioFile(url)
 	let inputBuffer_2 : AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: audioFile_2.processingFormat,
 	                                                        frameCapacity: AVAudioFrameCount(audioFile_2.length))
 	try audioFile_2.read(into: inputBuffer_2)
 
-	let newBuffer = convolution(inputBuffer_1: inputBuffer_1, buffer_1_weight: 1.0, inputBuffer_2: inputBuffer_2, buffer_2_weight: 1.0)
+	let newBuffer = convolution(inputBuffer_1: inputBuffer_1, buffer_1_weight: 0.5, inputBuffer_2: inputBuffer_2, buffer_2_weight: 1.0)
 	
 	let peak = getFloatPeakFromSamples(newBuffer)
 	
