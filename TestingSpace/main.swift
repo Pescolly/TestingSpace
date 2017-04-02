@@ -329,45 +329,168 @@ func multipointTimeStretching()
 func create_fade_in_out(inputBuffer : AVAudioPCMBuffer) -> AVAudioPCMBuffer
 {
 	// y = 1 + 9x/480
-	let FADE_Sec : Double = 0.01
+	let FADE_Sec : Double = 0.003
 	let fade_length : Double = inputBuffer.format.sampleRate * FADE_Sec
 	
 	for sample_index in 0 ... Int(fade_length)
 	{
 		let sample = inputBuffer.floatChannelData?.pointee[Int(sample_index)]
+			//scale to fade into max value
 		let scale = log10(1.0 + ((9.0 * Double(sample_index)) / fade_length))
+		if scale > 1.0 { break }
 		inputBuffer.floatChannelData?.pointee[Int(sample_index)] = Float(scale) * sample!
 		if sample != 0 { inputBuffer.floatChannelData?.pointee[Int(sample_index)] = sample! * Float(scale) }
 	}
 
-	let fade_length_int = Int(fade_length)
 	for sample_index in 0 ... Int(fade_length)
 	{
 		let new_index = Int(inputBuffer.frameLength) - Int(sample_index)
 		let sample = inputBuffer.floatChannelData?.pointee[new_index]
 		let scale = log10(1.0 + ((9.0 * Double(sample_index)) / fade_length))
+		if scale > 1.0 { break }
 		inputBuffer.floatChannelData?.pointee[new_index] = Float(scale) * sample!
 		if sample != 0 { inputBuffer.floatChannelData?.pointee[Int(sample_index)] = sample! * Float(scale) }
 	}
 	
-	
 	return inputBuffer
 }
 
+func conv(_ x: [Float], _ k: [Float]) -> [Float]
+{
+	precondition(x.count >= k.count, "Input vector [x] must have at least as many elements as the kernel,  [k]")
+	
+	let resultSize = x.count + k.count - 1
+	var result = [Float](repeating: 0, count: resultSize)
+	let kEnd = UnsafePointer<Float>(k).advanced(by: k.count - 1)
+	let xPad = repeatElement(Float(0.0), count: k.count-1)
+	let xPadded = xPad + x + xPad
+	vDSP_conv(xPadded, 1, kEnd, -1, &result, 1, vDSP_Length(resultSize), vDSP_Length(k.count))
+	
+	return result
+}
+
+
+
+
+
+
+func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inputBuffer_2 : AVAudioPCMBuffer, buffer_2_weight : Float) -> AVAudioPCMBuffer
+{
+	//de-constantize the input weights
+	let scalar_1 = [buffer_1_weight]
+	let scalar_2 = [buffer_2_weight]
+	
+	//create x vector using input_buffer 1
+	var x_vector = [Float]()
+	for sample_index in 0 ... Int(inputBuffer_1.frameLength)
+	{
+		x_vector.append((inputBuffer_1.floatChannelData?.pointee[sample_index])!)
+	}
+	//scale x
+	let x_count = vDSP_Length(x_vector.count)
+	var new_x_vector = [Float](repeating: 0.0, count: x_vector.count)
+	vDSP_vsmul(x_vector, 1, scalar_1, &new_x_vector, 1, x_count)
+	x_vector = new_x_vector
+	
+	//create h vector using input buffer 2
+	var h_vector = [Float]()
+	for sample_index in 0 ... Int(inputBuffer_2.frameLength)
+	{
+		h_vector.append((inputBuffer_2.floatChannelData?.pointee[sample_index])!)
+	}
+	//scale x
+	var new_h_vector = [Float](repeating: 0.0, count: h_vector.count)
+	vDSP_vsmul(h_vector, 1, scalar_2, &new_h_vector, 1, vDSP_Length(h_vector.count))
+	h_vector = new_h_vector
+
+	
+	if h_vector.count > x_vector.count	//make sure x is longer than h
+	{
+		let temp = x_vector
+		x_vector = h_vector
+		h_vector = temp
+	}
+	
+	//perform convolution of x and h
+	let resultSize = x_vector.count + h_vector.count - 1
+	var result = [Float](repeating: 0, count: resultSize)
+	let kEnd = UnsafePointer<Float>(h_vector).advanced(by: h_vector.count - 1)
+	let a1_pad = repeatElement(Float(0.0), count: h_vector.count-1)
+	let sample_array_1_padded = a1_pad + x_vector + a1_pad
+	vDSP_conv(sample_array_1_padded, 1, kEnd, -1, &result, 1, vDSP_Length(resultSize), vDSP_Length(h_vector.count))
+	
+	
+	let newBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer_1.format, frameCapacity: AVAudioFrameCount(result.count))
+	for sample_index in 0 ... resultSize-1
+	{
+		newBuffer.floatChannelData?.pointee[sample_index] = result[sample_index]
+	}
+	
+	let new_buffer_length = inputBuffer_1.frameLength + inputBuffer_2.frameLength
+	newBuffer.frameLength = new_buffer_length
+	
+	return newBuffer
+	
+}
 
 //start
 do
 {
 	
-	let url = URL(fileURLWithPath: "/Users/armen/Desktop/440hz_2sec_clip.wav")
-	let url2 = URL(fileURLWithPath: "/Users/armen/Desktop/440hz_2sec_clip_fade_in.wav")
-	let audioFile = try AVAudioFile(forReading: url)	//getSamplesFromAVAudioFile(url)
-	let samples : AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
-													frameCapacity: AVAudioFrameCount(audioFile.length))
-	try audioFile.read(into: samples)
-	let newBuffer = create_fade_in_out(inputBuffer: samples)
-	let newAudioFile = try AVAudioFile(forWriting: url2, settings: newBuffer.format.settings)
+	let url1 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/StaccatoMelody.wav")
+	let audioFile_1 = try AVAudioFile(forReading: url1)	//getSamplesFromAVAudioFile(url)
+	let inputBuffer_1 : AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: audioFile_1.processingFormat,
+													frameCapacity: AVAudioFrameCount(audioFile_1.length))
+	try audioFile_1.read(into: inputBuffer_1)
+	
+	let url2 = URL(fileURLWithPath: "/Users/armen/Desktop/AUDIOFILES/SkittishMice.wav")
+	let audioFile_2 = try AVAudioFile(forReading: url2)	//getSamplesFromAVAudioFile(url)
+	let inputBuffer_2 : AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: audioFile_2.processingFormat,
+	                                                        frameCapacity: AVAudioFrameCount(audioFile_2.length))
+	try audioFile_2.read(into: inputBuffer_2)
+
+	let newBuffer = convolution(inputBuffer_1: inputBuffer_1, buffer_1_weight: 0.2, inputBuffer_2: inputBuffer_2, buffer_2_weight: 0.2)
+	
+	
+	let output_URL = URL(fileURLWithPath: "/Users/armen/Desktop/convolve.wav")
+	let newAudioFile = try AVAudioFile(forWriting: output_URL, settings: newBuffer.format.settings)
 	try newAudioFile.write(from: newBuffer)
+
+	
+	
+	
+	
+	
+	
+	//	var sample_array_2 = [Float]()
+//	for sample_index in 0 ... Int(inputBuffer_2.frameLength)
+//	{
+//		sample_array_2.append((inputBuffer_2.floatChannelData?.pointee[sample_index])!)
+//	}
+//	
+//	var input_samples_1 : [Float]
+//	var input_samples_2 : [Float]
+//	
+//	if sample_array_2.count > sample_array_1.count //make sure "kernel" is shorter
+//	{
+//		input_samples_1 = sample_array_2
+//		input_samples_2 = sample_array_1
+//	}
+//	else
+//	{
+//		input_samples_1 = sample_array_1
+//		input_samples_2 = sample_array_2
+//	}
+//	
+//	let new_samples = conv(input_samples_1, input_samples_2)
+//	let newBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer_1.format, frameCapacity: AVAudioFrameCount(new_samples.count))
+//	for sample_index in 0 ... new_samples.count-1
+//	{
+//		newBuffer.floatChannelData?.pointee[sample_index] = new_samples[sample_index]
+//	}
+//	
+//	let new_buffer_length = inputBuffer_1.frameLength + inputBuffer_2.frameLength
+//	newBuffer.frameLength = new_buffer_length
 }
 
 catch { print("Can't create player") }
