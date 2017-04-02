@@ -155,49 +155,12 @@ func getPeakFromSamples(_ inputBuffer:AVAudioPCMBuffer) -> Int16
 
 func getFloatPeakFromSamples(_ inputBuffer:AVAudioPCMBuffer) -> Float
 {
-	var peakValue:Float = 0
-	for i in 0 ..< Int(inputBuffer.frameLength)
-	{
-		let sample:Float = inputBuffer.floatChannelData!.pointee[i]
-		
-//		if sample >= 1
-//		{
-//			sample = 1
-//		}
-//		if sample <= -1
-//		{
-//			sample = -1
-//		}
-		
-		
-		let absSampleValue:Float = abs(sample)
-		if absSampleValue > peakValue
-		{
-			peakValue = absSampleValue
-		}
-	}
-	return peakValue
+	var peak_value : Float = 0.0
+	vDSP_maxmgv((inputBuffer.floatChannelData?.pointee)!, vDSP_Stride(inputBuffer.format.channelCount), &peak_value, vDSP_Length(inputBuffer.frameLength))
+	return peak_value
 }
 
-func normalizeAudio(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
-{
-	//get peak and set ratio using peak with headroom
-	let peak:Int16 = getPeakFromSamples(inputBuffer)
-	let paddedMax:Int16 = Int16.max - 3000
-	let normalizationMax = Double(peak) / Double(paddedMax)
-	let normalizationRatio = 1 + (1-normalizationMax) //get ratio for multiplication (normMax:1)
-	
-	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
-	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
-	for i in 0...Int(inputBuffer.frameLength)
-	{
-		let sample:Int16 = inputBuffer.int16ChannelData!.pointee[i]
-		let normalizedSample = Int16(Double(sample) * normalizationRatio)
-		normalizedAudioBuffer.int16ChannelData?.pointee[i] = normalizedSample
-	}
-	
-	return normalizedAudioBuffer
-}
+
 
 func normalizeFloatAudio(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
 {
@@ -355,23 +318,18 @@ func create_fade_in_out(inputBuffer : AVAudioPCMBuffer) -> AVAudioPCMBuffer
 	return inputBuffer
 }
 
-func conv(_ x: [Float], _ k: [Float]) -> [Float]
-{
-	precondition(x.count >= k.count, "Input vector [x] must have at least as many elements as the kernel,  [k]")
-	
-	let resultSize = x.count + k.count - 1
-	var result = [Float](repeating: 0, count: resultSize)
-	let kEnd = UnsafePointer<Float>(k).advanced(by: k.count - 1)
-	let xPad = repeatElement(Float(0.0), count: k.count-1)
-	let xPadded = xPad + x + xPad
-	vDSP_conv(xPadded, 1, kEnd, -1, &result, 1, vDSP_Length(resultSize), vDSP_Length(k.count))
-	
-	return result
-}
-
-
-
-
+//func normalizeAudio(_ inputBuffer:AVAudioPCMBuffer) -> AVAudioPCMBuffer
+//{
+//	//get peak and set ratio using peak with headroom
+//	let normalizedAudioBuffer:AVAudioPCMBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer.format, frameCapacity: inputBuffer.frameCapacity)
+//	normalizedAudioBuffer.frameLength = inputBuffer.frameCapacity
+//
+//	vDSP_normalize((inputBuffer.floatChannelData?.pointee)!, 1,
+//	               <#T##__C: UnsafeMutablePointer<Float>?##UnsafeMutablePointer<Float>?#>, <#T##__IC: vDSP_Stride##vDSP_Stride#>,
+//	               <#T##__Mean: UnsafeMutablePointer<Float>##UnsafeMutablePointer<Float>#>, <#T##__StandardDeviation: UnsafeMutablePointer<Float>##UnsafeMutablePointer<Float>#>, <#T##__N: vDSP_Length##vDSP_Length#>)
+//
+//	return normalizedAudioBuffer
+//}
 
 
 func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inputBuffer_2 : AVAudioPCMBuffer, buffer_2_weight : Float) -> AVAudioPCMBuffer
@@ -380,29 +338,17 @@ func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inpu
 	let scalar_1 = [buffer_1_weight]
 	let scalar_2 = [buffer_2_weight]
 	
-	//create x vector using input_buffer 1
-	var x_vector = [Float]()
-	for sample_index in 0 ... Int(inputBuffer_1.frameLength)
-	{
-		x_vector.append((inputBuffer_1.floatChannelData?.pointee[sample_index])!)
-	}
-	//scale x
-	let x_count = vDSP_Length(x_vector.count)
-	var new_x_vector = [Float](repeating: 0.0, count: x_vector.count)
-	vDSP_vsmul(x_vector, 1, scalar_1, &new_x_vector, 1, x_count)
-	x_vector = new_x_vector
+	//create x vector using input_buffer 1 and scale by weight
+	let input_vector = inputBuffer_1.floatChannelData?.pointee
+	var x_vector = [Float](repeating: 0.0, count: Int(inputBuffer_1.frameLength))
+	vDSP_vsmul(input_vector!, 1, scalar_1, &x_vector, 1, vDSP_Length(inputBuffer_1.frameLength))
 	
-	//create h vector using input buffer 2
-	var h_vector = [Float]()
-	for sample_index in 0 ... Int(inputBuffer_2.frameLength)
-	{
-		h_vector.append((inputBuffer_2.floatChannelData?.pointee[sample_index])!)
-	}
-	//scale x
-	var new_h_vector = [Float](repeating: 0.0, count: h_vector.count)
-	vDSP_vsmul(h_vector, 1, scalar_2, &new_h_vector, 1, vDSP_Length(h_vector.count))
-	h_vector = new_h_vector
-
+	
+	//create h vector using input buffer 2  and scale
+	let input_vector_2 = inputBuffer_2.floatChannelData?.pointee
+	var h_vector = [Float](repeating: 0.0, count: Int(inputBuffer_2.frameLength))
+	vDSP_vsmul(input_vector_2!, 1, scalar_2, &h_vector, 1, vDSP_Length(inputBuffer_2.frameLength))
+	
 	
 	if h_vector.count > x_vector.count	//make sure x is longer than h
 	{
@@ -426,8 +372,7 @@ func convolution(inputBuffer_1 : AVAudioPCMBuffer, buffer_1_weight : Float, inpu
 		newBuffer.floatChannelData?.pointee[sample_index] = result[sample_index]
 	}
 	
-	let new_buffer_length = inputBuffer_1.frameLength + inputBuffer_2.frameLength
-	newBuffer.frameLength = new_buffer_length
+	newBuffer.frameLength = inputBuffer_1.frameLength + inputBuffer_2.frameLength - 1
 	
 	return newBuffer
 	
@@ -449,8 +394,9 @@ do
 	                                                        frameCapacity: AVAudioFrameCount(audioFile_2.length))
 	try audioFile_2.read(into: inputBuffer_2)
 
-	let newBuffer = convolution(inputBuffer_1: inputBuffer_1, buffer_1_weight: 0.2, inputBuffer_2: inputBuffer_2, buffer_2_weight: 0.2)
+	let newBuffer = convolution(inputBuffer_1: inputBuffer_1, buffer_1_weight: 1.0, inputBuffer_2: inputBuffer_2, buffer_2_weight: 1.0)
 	
+	let peak = getFloatPeakFromSamples(newBuffer)
 	
 	let output_URL = URL(fileURLWithPath: "/Users/armen/Desktop/convolve.wav")
 	let newAudioFile = try AVAudioFile(forWriting: output_URL, settings: newBuffer.format.settings)
@@ -458,52 +404,8 @@ do
 
 	
 	
-	
-	
-	
-	
-	//	var sample_array_2 = [Float]()
-//	for sample_index in 0 ... Int(inputBuffer_2.frameLength)
-//	{
-//		sample_array_2.append((inputBuffer_2.floatChannelData?.pointee[sample_index])!)
-//	}
-//	
-//	var input_samples_1 : [Float]
-//	var input_samples_2 : [Float]
-//	
-//	if sample_array_2.count > sample_array_1.count //make sure "kernel" is shorter
-//	{
-//		input_samples_1 = sample_array_2
-//		input_samples_2 = sample_array_1
-//	}
-//	else
-//	{
-//		input_samples_1 = sample_array_1
-//		input_samples_2 = sample_array_2
-//	}
-//	
-//	let new_samples = conv(input_samples_1, input_samples_2)
-//	let newBuffer = AVAudioPCMBuffer(pcmFormat: inputBuffer_1.format, frameCapacity: AVAudioFrameCount(new_samples.count))
-//	for sample_index in 0 ... new_samples.count-1
-//	{
-//		newBuffer.floatChannelData?.pointee[sample_index] = new_samples[sample_index]
-//	}
-//	
-//	let new_buffer_length = inputBuffer_1.frameLength + inputBuffer_2.frameLength
-//	newBuffer.frameLength = new_buffer_length
+
 }
 
 catch { print("Can't create player") }
 
-	//	let nurl = NSURL(fileURLWithPath: "/Users/armen/Music/loops/ACID_009_NORMA.WAV")
-	// 	let newFile = try AVAudioFile(forWriting: nurl, settings: UNIVERSAL_AUDIO_SETTINGS.AUDIO_PLAY_RECORD_SETTINGS)
-	//	try newFile.writeFromBuffer(normalizedSamples)
-	
-	//	envelopeDetection(samples, windowLength: 100)
-	
-	//	let audioDataPointer = normalizedSamples.int16ChannelData.memory
-	//	let bufferSizeInBytes = Int(normalizedSamples.frameLength) * 2
-	//	let audioData = NSData(bytes: audioDataPointer, length: bufferSizeInBytes)
-	
-	//	audioData.writeToFile("/Users/armen/Desktop/data", atomically: true)
-	
